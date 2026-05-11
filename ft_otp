@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+
+import argparse
+import base64
+import hashlib
+import hmac
+import os
+import struct
+import sys
+import time
+from pathlib import Path
+
+
+KEY_FILE_NAME = "ft_otp.key"
+ERROR_KEY = "./ft_otp: error: key must be 64 hexadecimal characters."
+ERROR_USAGE = "Usage: ./ft_otp -g <key_file> | -k <encrypted_key_file>"
+BLOCK_SIZE = 30
+DIGITS = 6
+
+
+def xor_bytes(data: bytes) -> bytes:
+    mask = hashlib.sha256(b"ft_otp").digest()
+    return bytes(byte ^ mask[index % len(mask)] for index, byte in enumerate(data))
+
+
+def validate_hex_key(text: str) -> bytes:
+    key = text.strip()
+    if len(key) < 64 or len(key) % 2 != 0:
+        raise ValueError
+    if any(char not in "0123456789abcdefABCDEF" for char in key):
+        raise ValueError
+    return bytes.fromhex(key)
+
+
+def save_key(source_path: Path) -> None:
+    try:
+        raw_text = source_path.read_text(encoding="utf-8")
+        key_bytes = validate_hex_key(raw_text)
+    except (OSError, ValueError):
+        print(ERROR_KEY)
+        sys.exit(1)
+
+    encrypted = base64.b64encode(xor_bytes(key_bytes))
+    Path(KEY_FILE_NAME).write_bytes(encrypted)
+    try:
+        os.chmod(KEY_FILE_NAME, 0o600)
+    except OSError:
+        pass
+    print(f"Key was successfully saved in {KEY_FILE_NAME}.")
+
+
+def load_key(key_path: Path) -> bytes:
+    try:
+        encrypted = key_path.read_bytes()
+        key_bytes = xor_bytes(base64.b64decode(encrypted, validate=True))
+    except (OSError, ValueError, base64.binascii.Error):
+        print(ERROR_USAGE)
+        sys.exit(1)
+
+    if len(key_bytes) < 32:
+        print(ERROR_USAGE)
+        sys.exit(1)
+    return key_bytes
+
+
+def hotp(secret: bytes, counter: int) -> int:
+    message = struct.pack(">Q", counter)
+    digest = hmac.new(secret, message, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return code % (10 ** DIGITS)
+
+
+def generate_otp(key_path: Path) -> None:
+    secret = load_key(key_path)
+    counter = int(time.time()) // BLOCK_SIZE
+    otp = hotp(secret, counter)
+    print(f"{otp:0{DIGITS}d}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=False)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-g", dest="mode", action="store_const", const="-g")
+    group.add_argument("-k", dest="mode", action="store_const", const="-k")
+    parser.add_argument("path")
+    return parser.parse_args()
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        print(ERROR_USAGE)
+        sys.exit(1)
+
+    args = parse_args()
+    source = Path(args.path)
+
+    if args.mode == "-g":
+        save_key(source)
+    else:
+        generate_otp(source)
+
+
+if __name__ == "__main__":
+    main()

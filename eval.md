@@ -1,0 +1,3 @@
+This project was about understanding and implementing one-time passwords, which are temporary codes used instead of a fixed password. The purpose of the subject was to show how authentication can be made safer by using a secret key combined with time, so the code changes regularly and cannot be reused easily.
+
+What I understood from the project is that the program has two main roles: first, to securely store a hexadecimal secret key, and second, to generate a 6-digit OTP from that key. The important idea is that the password is not permanent. It is based on the current time and the HOTP/TOTP logic, so it changes after a short interval.
